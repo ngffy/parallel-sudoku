@@ -7,14 +7,17 @@ threads = 1024
 
 def get_squares(board):
     """
-    Returns a view of the array where board[0] is the first 3x3 square,
+    Returns a copy of the array where board[0] is the first 3x3 square,
     board[1] is the second, and so on
     """
-    c = board.view()
-    c.shape = (3, 3, 3, 3)
-    c.swapaxes(1, 2)
-    c.shape = (9, 3, 3)
-    return c
+    return board.reshape(3, 3, 3, 3).swapaxes(1, 2).reshape(9, 3, 3)
+
+
+def get_board(squares):
+    """
+    Inverse of get_squares
+    """
+    return squares.reshape(3,3,3,3).swapaxes(1,2).reshape(9,9)
 
 
 def empty_squares(board, mask):
@@ -34,6 +37,8 @@ def random_fill(board):
                 i, j = it.multi_index
                 sb.data[i][j] = unused.pop()
 
+    return get_board(subboards)
+
 
 @cuda.jit
 def kernel(board, mask, output):
@@ -49,5 +54,5 @@ args = parser.parse_args()
 board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
         missing_values='-', usemask=True)
 
-random_fill(board)
+board = random_fill(board)
 board_copies = np.tile(board, (threads, 1, 1))
