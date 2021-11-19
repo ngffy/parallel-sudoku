@@ -12,7 +12,7 @@ SUBBOARD_SIZE = 3
 def backtrack(boards, num_boards, empty, num_empty, solved, output):
     ''' Function for each thread to solve a different board using backtracking algorithm
 
-        boards: array of multiple boards, with each board stored one after the other (array of ints)
+        boards: array of multiple boards, with each board stored one after the other (array of arrays)
         num_boards: number of boards in boards array (int)
         empty: array that stores indices of empty spaces (array of ints)
         num_empty: array that stores number of empty spaces in each board in boards (array of ints)
@@ -244,10 +244,10 @@ def main():
     max_boards_bfs = int(math.pow(2, 26))    # TODO not sure why this is it, just reused from someone's code
 
     # Initialize data to be input into kernel function
-    new_boards = np.empty(max_boards_bfs)
+    new_boards = np.empty(max_boards_bfs, dtype=object)
     old_boards = np.empty(max_boards_bfs, dtype=object)
     old_boards[0] = board
-    empty = np.empty(BOARD_SIZE*BOARD_SIZE)
+    empty = np.empty(BOARD_SIZE*BOARD_SIZE, dtype=np.float32)
     empty_count = 0
     board_index = 0
     total_boards = 1
@@ -271,7 +271,7 @@ def main():
         new_boards = old_boards
 
     solved = False
-    output = np.empty(BOARD_SIZE*BOARD_SIZE)
+    output = np.empty(BOARD_SIZE*BOARD_SIZE, dtype=np.float32)
 
     backtrack_kernel(blocks, threads, new_boards, count, empty, empty_count, solved, output)
 
