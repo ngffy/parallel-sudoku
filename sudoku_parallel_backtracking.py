@@ -1,6 +1,7 @@
 import argparse
 import numpy as np
 
+import math
 from numba import cuda
 
 BOARD_SIZE = 9
@@ -30,7 +31,6 @@ def backtrack(boards, num_boards, empty, num_empty, solved, output):
         while empty_index >= 0 and empty_index < current_num_empty:
             current_board[current_empty[empty_index]] += 1
 
-            # TODO check if board valid
             if not valid_board(current_board, current_empty[empty_index]):
             #   Board is invalid, so backtrack
               if (current_board[current_empty[empty_index]] >= BOARD_SIZE):
@@ -122,7 +122,6 @@ def breadth_first(old_boards, new_boards, total_boards, board_index, empty, empt
         index += cuda.blockDim.x * cuda.gridDim.x
 
 
-@cuda.jit
 def breadth_first_kernel(num_blocks, num_threads, old_boards, new_boards, total_boards, board_index, empty, empty_count):
     breadth_first[num_blocks, num_threads](old_boards, new_boards, total_boards, board_index, empty, empty_count)
 
@@ -241,14 +240,40 @@ def main():
     threads = 32
     blocks = board.size + (threads - 1) // threads
 
-    new_boards = np.empty(BOARD_SIZE*BOARD_SIZE)
-    old_boards = np.empty(BOARD_SIZE*BOARD_SIZE)
+    # Calculate the max number of boards that will need to be searched through
+    max_boards_bfs = int(math.pow(2, 26))    # TODO not sure why this is it, just reused from someone's code
+
+    # Initialize data to be input into kernel function
+    new_boards = np.empty(max_boards_bfs)
+    old_boards = np.empty(max_boards_bfs, dtype=object)
+    old_boards[0] = board
     empty = np.empty(BOARD_SIZE*BOARD_SIZE)
     empty_count = 0
     board_index = 0
     total_boards = 1
 
+    # Breadth first search on the initial board
     breadth_first_kernel(blocks, threads, old_boards, new_boards, total_boards, board_index, empty, empty_count)
 
+    count = 0
+    num_iterations = 18     # Subject to change
 
+    # Iterate through and perform more BFS to generate more boards
+    # NOTE I also don't know why we should switch the new and old boards
+    # Taken from https://github.com/vduan/parallel-sudoku-solver/blob/master/src/CudaSudoku.cc
+    for i in range(num_iterations):
+        if i % 2 == 0:
+            breadth_first_kernel(blocks, threads, new_boards, old_boards, total_boards, board_index, empty, empty_count)
+        else:
+            breadth_first_kernel(blocks, threads, old_boards, new_boards, total_boards, board_index, empty, empty_count)
+
+    if num_iterations % 2 == 1:
+        new_boards = old_boards
+
+    solved = False
+    output = np.empty(BOARD_SIZE*BOARD_SIZE)
+
+    backtrack_kernel(blocks, threads, new_boards, count, empty, empty_count, solved, output)
+
+    print(output)
 main()
