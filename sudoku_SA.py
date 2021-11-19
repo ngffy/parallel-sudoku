@@ -3,6 +3,8 @@ from numba import cuda
 import numpy as np
 from random import shuffle
 
+threads = 1024
+
 def get_squares(board):
     """
     Returns a view of the array where board[0] is the first 3x3 square,
@@ -48,3 +50,4 @@ board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
         missing_values='-', usemask=True)
 
 random_fill(board)
+board_copies = np.tile(board, (threads, 1, 1))
