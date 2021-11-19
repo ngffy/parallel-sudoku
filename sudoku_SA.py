@@ -1,5 +1,7 @@
 import argparse
-from numba import cuda
+from math import exp
+from numba import cuda, boolean, int64
+from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
 from random import shuffle
 
@@ -40,9 +42,89 @@ def random_fill(board):
     return get_board(subboards)
 
 
+@cuda.jit(device=True)
+def temperature(x):
+    return x
+
+
+@cuda.jit(device=True)
+def neighbor(board, mask, rng_states, tx):
+    i = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+
+    # This is ugly but I couldn't get the reshape method to work
+    sb = board[3* (i // 3):3*(i // 3) + 3,3*(i%3):3*(i%3)+3]
+    sbm = mask[3* (i // 3):3*(i // 3) + 3,3*(i%3):3*(i%3)+3]
+
+    # This is kinda ugly but it was easy to write
+    while True:
+        j1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        k1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        if sbm[j1][k1] == True:
+            break
+
+    while True:
+        j2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        k2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        if sbm[j2][k2] == True and not (j1 == j2 and k1 == k2):
+            break
+
+    # sb[j1][k1], sb[j2][k2] = sb[j2][k2], sb[j1][k1]
+    tmp = sb[j1][k1]
+    sb[j1][k1] = sb[j2][k2]
+    sb[j2][k2] = tmp
+
+
+@cuda.jit(device=True)
+def P(e_old, e_new, t):
+    if e_new < e_old:
+        return 1
+    return exp(-(e_new - e_old) / t)
+
+
+@cuda.jit(device=True)
+def E(b):
+    e = 0
+    for row in b:
+        present = cuda.local.array(9, boolean)
+        for i in row:
+            present[i] = True
+        for i in present:
+            if i == True:
+                e -= 1
+    for col in b.T:
+        present = cuda.local.array(9, boolean)
+        for i in col:
+            present[i] = True
+        for i in present:
+            if i == True:
+                e -= 1
+    return e
+
+
 @cuda.jit
-def kernel(board, mask, output):
-    pass
+def kernel(boards, mask, rng_states, outputs):
+    tx = cuda.threadIdx.x
+    board = boards[tx]
+
+    imax = 1000
+    for i in range(0, imax):
+        t = temperature(1 - (i + 1) / imax)
+
+        b = cuda.local.array((9, 9), int64)
+        for i in range(0, 9):
+            for j in range(0, 9):
+                b[i][j] = board[i][j]
+        neighbor(b, mask, rng_states, tx)
+
+        if P(E(board), E(b), t) >= xoroshiro128p_uniform_float32(rng_states, tx):
+            for i in range(0, 9):
+                for j in range(0, 9):
+                    board[i][j] = b[i][j]
+
+
+    for i in range(0, 9):
+        for j in range(0, 9):
+            outputs[tx][i][j] = board[i][j]
 
 
 parser = argparse.ArgumentParser(description="Solve a sudoku puzzle")
@@ -54,5 +136,11 @@ args = parser.parse_args()
 board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
         missing_values='-', usemask=True)
 
+# NOTE: probably need to change seed
+rng_states = create_xoroshiro128p_states(threads, seed=12)
+
 board = random_fill(board)
-board_copies = np.tile(board, (threads, 1, 1))
+board_copies = np.tile(board.data, (threads, 1, 1))
+outputs = np.zeros(board_copies.shape)
+kernel[1,threads](board_copies, board.mask, rng_states, outputs)
+print(outputs[np.any(outputs != 0, axis=(1,2))])
