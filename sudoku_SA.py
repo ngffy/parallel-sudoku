@@ -5,7 +5,7 @@ from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform
 import numpy as np
 from random import shuffle
 
-threads = 1024
+threads = 512
 
 def get_squares(board):
     """
@@ -57,14 +57,14 @@ def neighbor(board, mask, rng_states, tx):
 
     # This is kinda ugly but it was easy to write
     while True:
-        j1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
-        k1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        j1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
+        k1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
         if sbm[j1][k1] == True:
             break
 
     while True:
-        j2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
-        k2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        j2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
+        k2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
         if sbm[j2][k2] == True and not (j1 == j2 and k1 == k2):
             break
 
