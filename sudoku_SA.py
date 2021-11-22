@@ -44,7 +44,12 @@ def random_fill(board):
 
 @cuda.jit(device=True)
 def temperature(x):
-    return x
+    """
+    Trying to follow what they did here but its not working
+    https://www.adrian.idv.hk/2019-01-30-simanneal/
+    """
+    Tmax = 0.5
+    return Tmax * exp(-2.3 * x)
 
 
 @cuda.jit(device=True)
@@ -103,12 +108,21 @@ def E(b):
 
 @cuda.jit
 def kernel(boards, mask, rng_states, outputs):
+    # One idea: have each thread randomize its own board
+    # But that means rewriting random_fill as a device function which might
+    # suck
     tx = cuda.threadIdx.x
     board = boards[tx]
+    found = cuda.shared.array(1, int64)
 
-    imax = 1000
+    imax = 100000
     for i in range(0, imax):
-        t = temperature(1 - (i + 1) / imax)
+        # NOTE: Wondering if this is necessary or if we can just do found[0] ==
+        # 1 to speed things up since no assignment is occurring
+        if cuda.atomic.compare_and_swap(found, 1, 1):
+            break
+
+        t = temperature(i / imax)
 
         b = cuda.local.array((9, 9), int64)
         for i in range(0, 9):
@@ -116,7 +130,13 @@ def kernel(boards, mask, rng_states, outputs):
                 b[i][j] = board[i][j]
         neighbor(b, mask, rng_states, tx)
 
-        if P(E(board), E(b), t) >= xoroshiro128p_uniform_float32(rng_states, tx):
+        old = E(boarD)
+        new = E(b)
+        if new == -162:
+            cuda.atomic.compare_and_swap(found, 0, 1)
+            break
+
+        if P(old, new, t) >= xoroshiro128p_uniform_float32(rng_states, tx):
             for i in range(0, 9):
                 for j in range(0, 9):
                     board[i][j] = b[i][j]
@@ -143,4 +163,13 @@ board = random_fill(board)
 board_copies = np.tile(board.data, (threads, 1, 1))
 outputs = np.zeros(board_copies.shape)
 kernel[1,threads](board_copies, board.mask, rng_states, outputs)
-print(outputs[np.any(outputs != 0, axis=(1,2))])
+
+# FIXME: Should print the solved board(s) but I don't think the simulated
+# annealing is finding any because the parameters (temperature, etc.) aren't
+# optimized
+sorted_rows = np.sort(outputs, axis=2)
+sorted_cols = np.sort(outputs, axis=1).transpose(0,2,1)
+
+good_rows = np.all(sorted_rows == [1,2,3,4,5,6,7,8,9], axis=(1,2))
+good_cols = np.all(sorted_cols == [1,2,3,4,5,6,7,8,9], axis=(1,2))
+print(outputs[good_rows & good_cols])
