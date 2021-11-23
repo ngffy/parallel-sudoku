@@ -97,15 +97,18 @@ def P(e_old, e_new, t):
 @cuda.jit(device=True)
 def E(b):
     e = 0
+    present = cuda.local.array(10, boolean)
     for row in b:
-        present = cuda.local.array(9, boolean)
+        for i in range(0, 10):
+            present[i] = False
         for i in row:
             present[i] = True
         for i in present:
             if i == True:
                 e -= 1
     for col in b.T:
-        present = cuda.local.array(9, boolean)
+        for i in range(0, 10):
+            present[i] = False
         for i in col:
             present[i] = True
         for i in present:
