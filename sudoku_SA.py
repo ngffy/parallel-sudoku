@@ -130,7 +130,7 @@ def kernel(boards, mask, rng_states, outputs):
                 b[i][j] = board[i][j]
         neighbor(b, mask, rng_states, tx)
 
-        old = E(boarD)
+        old = E(board)
         new = E(b)
         if new == -162:
             cuda.atomic.compare_and_swap(found, 0, 1)
