@@ -53,12 +53,18 @@ def temperature(x):
 
 
 @cuda.jit(device=True)
+def get_square_dims(i):
+    return ((3 * (i // 3), 3 * (i // 3) + 3), (3 * (i % 3), 3 * (i % 3) + 3))
+
+
+@cuda.jit(device=True)
 def neighbor(board, mask, rng_states, tx):
     i = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
 
     # This is ugly but I couldn't get the reshape method to work
-    sb = board[3* (i // 3):3*(i // 3) + 3,3*(i%3):3*(i%3)+3]
-    sbm = mask[3* (i // 3):3*(i // 3) + 3,3*(i%3):3*(i%3)+3]
+    dims = get_square_dims(i)
+    sb = board[dims[0][0]:dims[0][1], dims[1][0]:dims[1][1]]
+    sbm = mask[dims[0][0]:dims[0][1], dims[1][0]:dims[1][1]]
 
     # This is kinda ugly but it was easy to write
     while True:
