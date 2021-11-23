@@ -44,10 +44,6 @@ def random_fill(board):
 
 @cuda.jit(device=True)
 def temperature(x):
-    """
-    Trying to follow what they did here but its not working
-    https://www.adrian.idv.hk/2019-01-30-simanneal/
-    """
     Tmax = 0.5
     Tmin = 0.05
     Tf = log(Tmin / Tmax)
@@ -57,6 +53,33 @@ def temperature(x):
 @cuda.jit(device=True)
 def get_square_dims(i):
     return ((3 * (i // 3), 3 * (i // 3) + 3), (3 * (i % 3), 3 * (i % 3) + 3))
+
+
+@cuda.jit(device=True)
+def random_fill_cuda(board, mask, rng_states, tx):
+    for i in range(0, 9):
+        dims = get_square_dims(i)
+        sb = board[dims[0][0]:dims[0][1], dims[1][0]:dims[1][1]]
+        sbm = mask[dims[0][0]:dims[0][1], dims[1][0]:dims[1][1]]
+
+        present = cuda.local.array(10, boolean)
+        for j in range(0, 10):
+            present[j] = False
+
+        for j in range(0, 3):
+            for k in range(0, 3):
+                if sbm[j][k] == 0:
+                    present[sb[j][k]] = True
+
+        for j in range(0, 3):
+            for k in range(0, 3):
+                if sbm[j][k] == 0:
+                    continue
+                r = 1 + int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+                while present[r]:
+                    r = 1 + int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+                sb[j][k] = r
+                present[r] = True
 
 
 @cuda.jit(device=True)
@@ -119,38 +142,34 @@ def E(b):
 
 @cuda.jit
 def kernel(boards, mask, rng_states, outputs):
-    # One idea: have each thread randomize its own board
-    # But that means rewriting random_fill as a device function which might
-    # suck
     tx = cuda.threadIdx.x
     board = boards[tx]
     found = cuda.shared.array(1, int64)
 
-    imax = 100000
-    for i in range(0, imax):
-        # NOTE: Wondering if this is necessary or if we can just do found[0] ==
-        # 1 to speed things up since no assignment is occurring
-        if cuda.atomic.compare_and_swap(found, 1, 1):
-            break
+    imax = 10000
+    # NOTE: Wondering if this is necessary or if we can just do found[0] == 1
+    # to speed things up since no assignment is occurring
+    while not cuda.atomic.compare_and_swap(found, 1, 1):
+        random_fill_cuda(board, mask, rng_states, tx)
+        for i in range(0, imax):
+            t = temperature(i / imax)
 
-        t = temperature(i / imax)
-
-        b = cuda.local.array((9, 9), int64)
-        for i in range(0, 9):
-            for j in range(0, 9):
-                b[i][j] = board[i][j]
-        neighbor(b, mask, rng_states, tx)
-
-        old = E(board)
-        new = E(b)
-        if new == -162:
-            cuda.atomic.compare_and_swap(found, 0, 1)
-            break
-
-        if P(old, new, t) >= xoroshiro128p_uniform_float32(rng_states, tx):
+            b = cuda.local.array((9, 9), int64)
             for i in range(0, 9):
                 for j in range(0, 9):
-                    board[i][j] = b[i][j]
+                    b[i][j] = board[i][j]
+            neighbor(b, mask, rng_states, tx)
+
+            old = E(board)
+            new = E(b)
+            if P(old, new, t) >= xoroshiro128p_uniform_float32(rng_states, tx):
+                for i in range(0, 9):
+                    for j in range(0, 9):
+                        board[i][j] = b[i][j]
+
+            if new == -162:
+                cuda.atomic.compare_and_swap(found, 0, 1)
+                break
 
 
     for i in range(0, 9):
@@ -170,7 +189,6 @@ board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
 # NOTE: probably need to change seed
 rng_states = create_xoroshiro128p_states(threads, seed=12)
 
-board = random_fill(board)
 board_copies = np.tile(board.data, (threads, 1, 1))
 outputs = np.zeros(board_copies.shape)
 kernel[1,threads](board_copies, board.mask, rng_states, outputs)
