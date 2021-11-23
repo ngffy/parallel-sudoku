@@ -1,5 +1,5 @@
 import argparse
-from math import exp
+from math import exp, log
 from numba import cuda, boolean, int64
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
@@ -49,7 +49,9 @@ def temperature(x):
     https://www.adrian.idv.hk/2019-01-30-simanneal/
     """
     Tmax = 0.5
-    return Tmax * exp(-2.3 * x)
+    Tmin = 0.05
+    Tf = log(Tmin / Tmax)
+    return Tmax * exp(Tf * x)
 
 
 @cuda.jit(device=True)
