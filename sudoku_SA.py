@@ -103,9 +103,14 @@ def E(b):
 
 
 @cuda.jit
-def kernel(boards, mask, rng_states, output):
+def kernel(init_board, mask, rng_states, output):
     tx = cuda.threadIdx.x
-    board = boards[tx]
+
+    board = cuda.local.array((9, 9), int64)
+    for i in range(0, 9):
+        for j in range(0, 9):
+            board[i][j] = init_board[i][j]
+
     output_access = cuda.shared.array(1, int64)
     cuda.atomic.compare_and_swap(output_access, 0, 1)
 
@@ -147,8 +152,7 @@ board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
 # NOTE: probably need to change seed
 rng_states = create_xoroshiro128p_states(threads, seed=12)
 
-board_copies = np.tile(board.data, (threads, 1, 1))
 output = np.zeros(board.shape)
-kernel[1,threads](board_copies, board.mask, rng_states, output)
+kernel[1,threads](board.data, board.mask, rng_states, output)
 
 print(output)
