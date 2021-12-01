@@ -106,12 +106,11 @@ def E(b):
 def kernel(boards, mask, rng_states, output):
     tx = cuda.threadIdx.x
     board = boards[tx]
-    found = cuda.shared.array(1, int64)
+    output_access = cuda.shared.array(1, int64)
+    cuda.atomic.compare_and_swap(output_access, 0, 1)
 
     imax = 10000
-    # NOTE: Wondering if this is necessary or if we can just do found[0] == 1
-    # to speed things up since no assignment is occurring
-    while not cuda.atomic.compare_and_swap(found, 1, 1):
+    while output_access[0] == 1:
         random_fill_cuda(board, mask, rng_states, tx)
         for i in range(0, imax):
             t = temperature(i / imax)
@@ -129,8 +128,7 @@ def kernel(boards, mask, rng_states, output):
                     for j in range(0, 9):
                         board[i][j] = b[i][j]
 
-            if new == -162 and not found[0]:
-                cuda.atomic.compare_and_swap(found, 0, 1)
+            if new == -162 and cuda.atomic.compare_and_swap(output_access, 1, 0):
                 for i in range(0, 9):
                     for j in range(0, 9):
                         output[i][j] = board[i][j]
