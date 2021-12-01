@@ -138,7 +138,7 @@ def E(b):
 
 
 @cuda.jit
-def kernel(boards, mask, rng_states, outputs):
+def kernel(boards, mask, rng_states, output):
     tx = cuda.threadIdx.x
     board = boards[tx]
     found = cuda.shared.array(1, int64)
@@ -164,14 +164,12 @@ def kernel(boards, mask, rng_states, outputs):
                     for j in range(0, 9):
                         board[i][j] = b[i][j]
 
-            if new == -162:
+            if new == -162 and not found[0]:
                 cuda.atomic.compare_and_swap(found, 0, 1)
+                for i in range(0, 9):
+                    for j in range(0, 9):
+                        output[i][j] = board[i][j]
                 break
-
-
-    for i in range(0, 9):
-        for j in range(0, 9):
-            outputs[tx][i][j] = board[i][j]
 
 
 parser = argparse.ArgumentParser(description="Solve a sudoku puzzle")
@@ -187,12 +185,7 @@ board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
 rng_states = create_xoroshiro128p_states(threads, seed=12)
 
 board_copies = np.tile(board.data, (threads, 1, 1))
-outputs = np.zeros(board_copies.shape)
-kernel[1,threads](board_copies, board.mask, rng_states, outputs)
+output = np.zeros(board.shape)
+kernel[1,threads](board_copies, board.mask, rng_states, output)
 
-sorted_rows = np.sort(outputs, axis=2)
-sorted_cols = np.sort(outputs, axis=1).transpose(0,2,1)
-
-good_rows = np.all(sorted_rows == [1,2,3,4,5,6,7,8,9], axis=(1,2))
-good_cols = np.all(sorted_cols == [1,2,3,4,5,6,7,8,9], axis=(1,2))
-print(outputs[good_rows & good_cols])
+print(output)
