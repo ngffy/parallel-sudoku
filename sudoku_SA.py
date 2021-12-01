@@ -104,10 +104,7 @@ def neighbor(board, mask, rng_states, tx):
         if sbm[j2][k2] == True and not (j1 == j2 and k1 == k2):
             break
 
-    # sb[j1][k1], sb[j2][k2] = sb[j2][k2], sb[j1][k1]
-    tmp = sb[j1][k1]
-    sb[j1][k1] = sb[j2][k2]
-    sb[j2][k2] = tmp
+    sb[j1][k1], sb[j2][k2] = sb[j2][k2], sb[j1][k1]
 
 
 @cuda.jit(device=True)
