@@ -7,41 +7,6 @@ from random import shuffle
 
 threads = 512
 
-def get_squares(board):
-    """
-    Returns a copy of the array where board[0] is the first 3x3 square,
-    board[1] is the second, and so on
-    """
-    return board.reshape(3, 3, 3, 3).swapaxes(1, 2).reshape(9, 3, 3)
-
-
-def get_board(squares):
-    """
-    Inverse of get_squares
-    """
-    return squares.reshape(3,3,3,3).swapaxes(1,2).reshape(9,9)
-
-
-def empty_squares(board, mask):
-    return np.sum(board.mask)
-
-
-def random_fill(board):
-    subboards = get_squares(board)
-
-    for sb in subboards:
-        unused = list(set(range(1, 10)) - set(sb.data.flatten()))
-        shuffle(unused)
-        with np.nditer(sb.mask, flags=['multi_index']) as it:
-            for x in it:
-                if x == False:
-                    continue
-                i, j = it.multi_index
-                sb.data[i][j] = unused.pop()
-
-    return get_board(subboards)
-
-
 @cuda.jit(device=True)
 def temperature(x):
     Tmax = 0.5
