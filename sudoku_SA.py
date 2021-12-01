@@ -193,9 +193,6 @@ board_copies = np.tile(board.data, (threads, 1, 1))
 outputs = np.zeros(board_copies.shape)
 kernel[1,threads](board_copies, board.mask, rng_states, outputs)
 
-# FIXME: Should print the solved board(s) but I don't think the simulated
-# annealing is finding any because the parameters (temperature, etc.) aren't
-# optimized
 sorted_rows = np.sort(outputs, axis=2)
 sorted_cols = np.sort(outputs, axis=1).transpose(0,2,1)
 
