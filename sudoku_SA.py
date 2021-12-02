@@ -9,7 +9,7 @@ threads = 512
 
 @cuda.jit(device=True)
 def temperature(x):
-    Tmax = 0.5
+    Tmax = 1
     Tmin = 0.05
     Tf = log(Tmin / Tmax)
     return Tmax * exp(Tf * x)
