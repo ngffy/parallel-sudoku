@@ -1,18 +1,16 @@
 import argparse
 from math import exp, log
-from numba import cuda, boolean, int64
+from numba import cuda, boolean, int16, int64
 from numba.cuda.random import create_xoroshiro128p_states, xoroshiro128p_uniform_float32
 import numpy as np
-from random import shuffle
+from random import shuffle, getrandbits
 
 threads = 512
 
 @cuda.jit(device=True)
-def temperature(x):
-    Tmax = 1
-    Tmin = 0.05
-    Tf = log(Tmin / Tmax)
-    return Tmax * exp(Tf * x)
+def temperature(x, t_max):
+    alpha = 0.99985
+    return t_max * alpha ** x
 
 
 @cuda.jit(device=True)
@@ -49,6 +47,8 @@ def random_fill_cuda(board, mask, rng_states, tx):
 
 @cuda.jit(device=True)
 def neighbor(board, mask, rng_states, tx):
+    # FIXME: Something here is making the program hang once a solution is found
+    # in some instances
     i = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
 
     # This is ugly but I couldn't get the reshape method to work
@@ -58,14 +58,16 @@ def neighbor(board, mask, rng_states, tx):
 
     # This is kinda ugly but it was easy to write
     while True:
-        j1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
-        k1 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
+        r = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        j1 = r // 3
+        k1 = r % 3
         if sbm[j1][k1] == True:
             break
 
     while True:
-        j2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
-        k2 = int(xoroshiro128p_uniform_float32(rng_states, tx) * 3)
+        r = int(xoroshiro128p_uniform_float32(rng_states, tx) * 9)
+        j2 = r // 3
+        k2 = r % 3
         if sbm[j2][k2] == True and not (j1 == j2 and k1 == k2):
             break
 
@@ -76,7 +78,10 @@ def neighbor(board, mask, rng_states, tx):
 def P(e_old, e_new, t):
     if e_new < e_old:
         return 1
-    return exp(-(e_new - e_old) / t)
+    if t < 0.001:
+        return 0
+    p = (e_new - e_old) / t
+    return exp(-p)
 
 
 @cuda.jit(device=True)
@@ -102,41 +107,69 @@ def E(b):
     return e
 
 
+@cuda.jit(device=True)
+def init_t_max(board, mask, rng_states, tx):
+    s = 30
+    samples = cuda.local.array(s, int16)
+    mean = 0
+
+    b = cuda.local.array((9, 9), int16)
+    for i in range(0, s):
+        board_copy(board, b)
+        neighbor(b, mask, rng_states, tx)
+
+        samples[i] = E(b)
+        mean += samples[i]
+
+    mean /= s
+
+    var = 0
+    for i in range(0, s):
+        var += (samples[i] - mean) ** 2
+    var /= s
+
+    return var ** (1 / 2)
+
+
+@cuda.jit(device=True)
+def board_copy(a, b):
+    for i in range(0, 9):
+        for j in range(0, 9):
+            b[i][j] = a[i][j]
+
+
 @cuda.jit
 def kernel(init_board, mask, rng_states, output):
     tx = cuda.threadIdx.x
 
-    board = cuda.local.array((9, 9), int64)
-    for i in range(0, 9):
-        for j in range(0, 9):
-            board[i][j] = init_board[i][j]
+    board = cuda.local.array((9, 9), int16)
+    board_copy(init_board, board)
 
     output_access = cuda.shared.array(1, int64)
     cuda.atomic.compare_and_swap(output_access, 0, 1)
+    cuda.syncthreads()
 
-    imax = 10000
-    while output_access[0] == 1:
+    b = cuda.local.array((9, 9), int16)
+    imax = 100000
+    while cuda.atomic.compare_and_swap(output_access, 1, 1):
         random_fill_cuda(board, mask, rng_states, tx)
+        t_max = init_t_max(board, mask, rng_states, tx)
         for i in range(0, imax):
-            t = temperature(i / imax)
+            t = temperature(i, t_max)
 
-            b = cuda.local.array((9, 9), int64)
-            for i in range(0, 9):
-                for j in range(0, 9):
-                    b[i][j] = board[i][j]
+            board_copy(board, b)
             neighbor(b, mask, rng_states, tx)
 
             old = E(board)
             new = E(b)
-            if P(old, new, t) >= xoroshiro128p_uniform_float32(rng_states, tx):
-                for i in range(0, 9):
-                    for j in range(0, 9):
-                        board[i][j] = b[i][j]
+            p = P(old, new, t)
+            if p >= xoroshiro128p_uniform_float32(rng_states, tx):
+                board_copy(b, board)
 
             if new == -162 and cuda.atomic.compare_and_swap(output_access, 1, 0):
-                for i in range(0, 9):
-                    for j in range(0, 9):
-                        output[i][j] = board[i][j]
+                board_copy(board, output)
+
+            if 0 == cuda.atomic.compare_and_swap(output_access, 0, 0):
                 break
 
 
@@ -149,10 +182,12 @@ args = parser.parse_args()
 board = np.genfromtxt(args.filename, dtype=int, delimiter=' ',
         missing_values='-', usemask=True)
 
-# NOTE: probably need to change seed
-rng_states = create_xoroshiro128p_states(threads, seed=12)
+rng_states = create_xoroshiro128p_states(threads, seed=12, subsequence_start=getrandbits(16))
 
 output = np.zeros(board.shape)
-kernel[1,threads](board.data, board.mask, rng_states, output)
+cuda_board = cuda.to_device(board.data)
+cuda_mask = cuda.to_device(board.mask)
+
+kernel[1,threads](cuda_board, cuda_mask, rng_states, output)
 
 print(output)
